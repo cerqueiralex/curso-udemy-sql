@@ -115,3 +115,215 @@ WHERE ID_Aluno IN (
 -- Resultado: A consulta principal pega a lista de IDs retornada pela subquery
 -- e filtra a tabela 'Alunos' para mostrar apenas os nomes correspondentes.
 ```
+
+# Exemplos e Tipos
+
+Vamos usar um cenário com duas tabelas simples para todos os exemplos: `Funcionarios` e `Departamentos`.
+
+  * **`Departamentos`**:
+      * `ID_Departamento` (Chave Primária)
+      * `Nome_Departamento`
+  * **`Funcionarios`**:
+      * `ID_Funcionario` (Chave Primária)
+      * `Nome`
+      * `Salario`
+      * `ID_Departamento_FK` (Chave Estrangeira para `Departamentos`)
+
+-----
+
+### **1. Subqueries `SELECT` (Escalares)**
+
+Este tipo de subquery retorna **exatamente um valor único (uma coluna e uma linha)**. Ela é usada na lista de colunas da consulta principal, geralmente para calcular um valor relacionado a cada linha do resultado.
+
+**Explicação:**
+No exemplo abaixo, queremos listar cada funcionário, seu salário, e também exibir o salário médio de **toda** a empresa na mesma linha. A subquery `(SELECT AVG(Salario) FROM Funcionarios)` é escalar porque calcula um único valor (a média de todos os salários), que é então exibido como uma nova coluna chamada `Media_Geral_Salarios` para cada funcionário.
+
+**Código Exemplo:**
+
+```sql
+SELECT
+    Nome,
+    Salario,
+    -- Início da Subquery Escalar
+    (SELECT AVG(Salario) FROM Funcionarios) AS Media_Geral_Salarios,
+    -- Também podemos usá-la para fazer um cálculo em tempo real
+    Salario - (SELECT AVG(Salario) FROM Funcionarios) AS Diferenca_Para_Media
+FROM
+    Funcionarios;
+```
+
+**Resultado esperado:**
+| Nome | Salario | Media\_Geral\_Salarios | Diferenca\_Para\_Media |
+| :--- | :--- | :--- | :--- |
+| Ana | 6000 | 5500 | 500 |
+| Bruno | 5000 | 5500 | -500 |
+| Carlos | 5500 | 5500 | 0 |
+
+-----
+
+### **2. Subqueries `FROM` (Derived Tables / Tabelas Derivadas)**
+
+Este tipo de subquery é usado na cláusula `FROM`. A consulta interna é executada primeiro, e seu resultado é tratado como uma **tabela temporária (ou virtual)**, da qual a consulta externa pode selecionar dados. É obrigatório dar um `ALIAS` (um apelido) para essa tabela derivada.
+
+**Explicação:**
+No exemplo abaixo, o objetivo é primeiro calcular a soma e a média de salários **por departamento** e, a partir desse resultado agrupado, selecionar apenas os departamentos cuja média salarial seja superior a R$ 5.000.
+
+A subquery cria uma tabela virtual chamada `ResumoDepartamentos` com os cálculos. A consulta principal então filtra essa tabela virtual.
+
+**Código Exemplo:**
+
+```sql
+SELECT
+    Nome_Departamento,
+    Media_Salarial_Por_Depto
+FROM
+    -- Início da Subquery (Tabela Derivada)
+    (
+        SELECT
+            d.Nome_Departamento,
+            COUNT(f.ID_Funcionario) AS Numero_Funcionarios,
+            AVG(f.Salario) AS Media_Salarial_Por_Depto
+        FROM
+            Funcionarios AS f
+        JOIN
+            Departamentos AS d ON f.ID_Departamento_FK = d.ID_Departamento
+        GROUP BY
+            d.Nome_Departamento
+    ) AS ResumoDepartamentos -- Alias obrigatório para a tabela derivada
+    -- Fim da Subquery
+WHERE
+    ResumoDepartamentos.Media_Salarial_Por_Depto > 5000;
+```
+
+-----
+
+### **3. Subqueries `WHERE` (Múltiplos Níveis)**
+
+Este é o uso mais comum. A subquery é usada na cláusula `WHERE` para filtrar os resultados da consulta principal. Ela pode retornar uma lista de valores (para ser usada com `IN` ou `NOT IN`) ou um valor único (para ser usada com `=`, `>`, `<`, etc.).
+
+**Explicação:**
+No exemplo abaixo, queremos encontrar o nome de todos os funcionários que trabalham no departamento de 'Tecnologia'.
+
+A consulta interna (a subquery) é executada primeiro para descobrir qual é o `ID_Departamento` correspondente ao nome 'Tecnologia'. A consulta externa então usa esse ID para filtrar a tabela `Funcionarios` e retornar apenas os funcionários que pertencem àquele departamento.
+
+**Código Exemplo:**
+
+```sql
+SELECT
+    Nome,
+    Salario
+FROM
+    Funcionarios
+WHERE
+    ID_Departamento_FK IN (
+        -- Início da Subquery. Ela retorna uma lista de IDs de departamento.
+        -- Neste caso, retornará apenas um ID, mas o IN funciona para múltiplos também.
+        SELECT ID_Departamento FROM Departamentos WHERE Nome_Departamento = 'Tecnologia'
+        -- Fim da Subquery
+    );
+```
+
+Excelente pergunta\! Além da classificação pelo local onde a subquery é usada (`SELECT`, `FROM`, `WHERE`), existem outras formas importantes de classificar as subqueries, principalmente pelo seu **comportamento** e pelos **operadores** com os quais elas trabalham.
+
+As duas categorias conceituais mais importantes são: **Subqueries Correlacionadas** e **Não Correlacionadas**.
+
+-----
+
+### **4. Subquery Não Correlacionada (Self-Contained)**
+
+É o tipo que vimos na maioria dos exemplos anteriores.
+
+  * **Característica:** A subquery interna pode ser executada de forma completamente independente da consulta externa. Ela é executada **uma única vez**, e seu resultado é "entregue" para a consulta externa usar.
+  * **Exemplo (Relembrando):**
+    ```sql
+    -- Encontrar funcionários que trabalham no departamento de 'Tecnologia'
+    SELECT Nome FROM Funcionarios
+    WHERE ID_Departamento_FK = (SELECT ID_Departamento FROM Departamentos WHERE Nome_Departamento = 'Tecnologia');
+    ```
+    Aqui, `(SELECT ID_Departamento FROM Departamentos ...)` é executada primeiro para encontrar o ID (ex: 5). Depois, a consulta principal efetivamente se torna `SELECT Nome FROM Funcionarios WHERE ID_Departamento_FK = 5;`.
+
+-----
+
+### **5. Subquery Correlacionada (Correlated Subquery)**
+
+Este é um conceito mais avançado e muito poderoso.
+
+  * **Característica:** A subquery interna **depende de dados da consulta externa**. Ela não pode ser executada de forma independente. O banco de dados a executa repetidamente, **uma vez para cada linha** que está sendo processada pela consulta externa.
+  * **Cenário:** "Encontrar todos os funcionários que ganham mais do que a média salarial do **seu próprio departamento**."
+  * **Explicação:** Para cada funcionário na consulta externa, a subquery interna precisa calcular a média salarial apenas para o departamento *daquele funcionário específico*. A subquery precisa do `ID_Departamento` da linha atual da consulta externa.
+  * **Código Exemplo:**
+    ```sql
+    SELECT
+        f1.Nome,
+        f1.Salario,
+        d.Nome_Departamento
+    FROM
+        Funcionarios AS f1
+    JOIN
+        Departamentos AS d ON f1.ID_Departamento_FK = d.ID_Departamento
+    WHERE
+        f1.Salario > (
+            -- Início da Subquery Correlacionada
+            -- Esta subquery calcula a média salarial apenas para o departamento do funcionário f1
+            SELECT AVG(f2.Salario)
+            FROM Funcionarios AS f2
+            WHERE f2.ID_Departamento_FK = f1.ID_Departamento_FK -- A "correlação" acontece aqui!
+            -- Fim da Subquery
+        );
+    ```
+    **Atenção:** Subqueries correlacionadas podem ser lentas em tabelas muito grandes, pois a consulta interna é executada várias vezes.
+
+-----
+
+### **6. Subqueries com Operadores Específicos**
+
+Além do `IN` e de operadores de comparação (`=`, `>`), existem outros operadores lógicos que são projetados para trabalhar com subqueries.
+
+#### **A. `EXISTS` e `NOT EXISTS`**
+
+  * **Função:** Verifica se a subquery retorna **qualquer linha**. `EXISTS` é verdadeiro se a subquery retornar uma ou mais linhas; `NOT EXISTS` é verdadeiro se ela não retornar nenhuma. É usado para checar a existência de uma relação. Muitas vezes é mais performático que `IN`.
+  * **Cenário:** "Listar todos os departamentos que **têm** pelo menos um funcionário associado."
+  * **Código Exemplo:**
+    ```sql
+    SELECT
+        Nome_Departamento
+    FROM
+        Departamentos d
+    WHERE EXISTS (
+        -- A subquery verifica se existe algum funcionário para o departamento 'd' atual
+        SELECT 1 -- Usamos 'SELECT 1' por convenção, é o mais rápido
+        FROM Funcionarios f
+        WHERE f.ID_Departamento_FK = d.ID_Departamento
+    );
+    ```
+
+#### **B. `ANY` e `ALL`**
+
+  * **Função:** São usados com operadores de comparação (`=`, `>`, `<`, `<>`) para comparar um valor com uma lista de valores retornada pela subquery.
+      * `> ANY`: Maior que pelo menos um dos valores (ou seja, maior que o valor mínimo da lista).
+      * `> ALL`: Maior que todos os valores (ou seja, maior que o valor máximo da lista).
+  * **Cenário:** "Encontrar funcionários cujo salário é maior que o salário de **todos** os funcionários do departamento de 'RH' (cujo ID é 3)."
+  * **Código Exemplo:**
+    ```sql
+    SELECT
+        Nome,
+        Salario
+    FROM
+        Funcionarios
+    WHERE
+        Salario > ALL (
+            -- A subquery retorna uma lista de salários do pessoal de RH
+            SELECT Salario
+            FROM Funcionarios
+            WHERE ID_Departamento_FK = 3
+        );
+    ```
+
+### **Resumo dos Tipos**
+
+| Tipo de Subquery | Principal Característica | Exemplo de Uso Comum |
+| :--- | :--- | :--- |
+| **Não Correlacionada** | Executada 1 vez, independente da consulta externa. | Filtrar com base em um resultado fixo (`WHERE ... IN (...)`). |
+| **Correlacionada** | Executada 1 vez por linha da consulta externa, depende dela. | Comparar um valor da linha com um resultado agregado do seu próprio grupo. |
+| **Com `EXISTS`** | Verifica a existência de linhas, retorna `TRUE` ou `FALSE`. | Encontrar registros em uma tabela que têm correspondência em outra. |
+| **Com `ANY` / `ALL`** | Compara um valor com uma lista de valores da subquery. | Encontrar valores que são maiores/menores que o mínimo/máximo de um conjunto. |
